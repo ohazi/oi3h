@@ -1,0 +1,13 @@
+[package]
+name = "oi3h"
+version = "0.1.0"
+authors = ["Oren Hazi <oren.hazi@gmail.com>"]
+edition = "2018"
+
+description = "Oren's i3 Helper"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+i3ipc = { version = "0.10.1", features = ["i3-4-14"] }
+clap = "2.33.1"
