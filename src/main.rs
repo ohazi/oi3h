@@ -94,6 +94,20 @@ fn border_validator(input: String) -> Result<(), String> {
 }
 
 fn border_subcmd(matches: &clap::ArgMatches) {
+    let mut connection = I3Connection::connect().unwrap();
+    let tree = connection.get_tree().unwrap();
+    let focused = i3_find_focused_node(&tree).unwrap();
+
+    // current_border_width seems to be in units of DPI-scaled pixels. There
+    // doesn't appear to be an easy, robust way to convert back, so we'll only
+    // match against the border type when cycling, and ignore the width. This
+    // means that you won't be able to, e.g. toggle ["pixel 2" "pixel 5"
+    // "pixel 10"], but you will be able to toggle ["none" "pixel 2" "normal 4"].
+    let current_state = Border {
+        border: focused.border.clone(),
+        width: Some(focused.current_border_width),
+    };
+
     if matches.is_present("toggle") {
         let toggle_states: Vec<Border> = matches
             .values_of("toggle")
@@ -109,21 +123,6 @@ fn border_subcmd(matches: &clap::ArgMatches) {
             eprintln!("Set of border states to toggle should be unique");
             std::process::exit(1);
         }
-
-        let mut connection = I3Connection::connect().unwrap();
-
-        let tree = connection.get_tree().unwrap();
-        let focused = i3_find_focused_node(&tree).unwrap();
-
-        // current_border_width seems to be in units of DPI-scaled pixels. There
-        // doesn't appear to be an easy, robust way to convert back, so we'll only
-        // match against the border type when cycling, and ignore the width. This
-        // means that you won't be able to, e.g. toggle ["pixel 2" "pixel 5"
-        // "pixel 10"], but you will be able to toggle ["none" "pixel 2" "normal 4"].
-        let current_state = Border {
-            border: focused.border.clone(),
-            width: Some(focused.current_border_width),
-        };
 
         // find index of current_state in toggle_states, otherwise use index 0
         let current_state_id: usize = toggle_states
@@ -162,6 +161,8 @@ fn border_subcmd(matches: &clap::ArgMatches) {
             }
             _ => {}
         }
+    } else {
+        println!("{:?}", current_state);
     }
 }
 
