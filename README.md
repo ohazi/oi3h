@@ -29,3 +29,9 @@ Set of border states to toggle should be unique
 1
 $
 ```
+
+This command targets the currently focused window. 
+
+##### TODO:
+- Window targeting functionality (e.g. 'all windows' 'all floating windows' 'all windows on workspace 2' etc.)
+- Change default window borders
