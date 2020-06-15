@@ -4,6 +4,7 @@ use i3ipc::reply::{Node, NodeBorder};
 use i3ipc::I3Connection;
 
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 
 fn main() {
     let matches = clap::App::new(clap::crate_name!())
@@ -18,7 +19,7 @@ fn main() {
                     clap::Arg::with_name("toggle")
                         .long("toggle")
                         .short("t")
-                        .help("Toggle between specified list of border styles")
+                        .help("Toggle between a list of border styles")
                         .takes_value(true)
                         .multiple(true)
                         .validator(border_validator),
@@ -27,36 +28,59 @@ fn main() {
         .get_matches();
 
     match matches.subcommand() {
-        ("border", Some(toggle_matches)) => border_subcmd(toggle_matches),
-        ("", None) => unreachable!(),
+        ("border", Some(border_matches)) => border_subcmd(border_matches),
         _ => unreachable!(),
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-enum Border {
-    None,
-    Normal(Option<i32>),
-    Pixel(Option<i32>),
+#[derive(Debug, Clone, Eq)]
+struct Border {
+    /// Only the `border` field will be considered when comparing `Border` values.
+    /// The `width` field is not considered because users ask i3 to set the border
+    /// width in pixels, but the i3 layout tree contains border width values in
+    /// DPI-scaled pixels. Since there isn't an easy way to convert back, matching
+    /// a requested state against the current state is difficult.
+    border: NodeBorder,
+    width: Option<i32>,
+}
+
+impl PartialEq for Border {
+    fn eq(&self, other: &Self) -> bool {
+        self.border == other.border
+    }
+}
+
+impl Hash for Border {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.border.clone() as i32).hash(state);
+    }
 }
 
 fn border_parser(input: &str) -> Result<Border, String> {
     let mut tokens = input.split_whitespace();
-
     let first = tokens
         .next()
         .ok_or("Expected at least one token")?
         .to_lowercase();
     let second = tokens.next();
     let second: Option<i32> = match second.map(|s| s.parse::<i32>()) {
-        Some(r) => Some(r.map_err(|_e| format!("'{}': {}", second.unwrap(), _e))?),
+        Some(r) => Some(r.map_err(|e| format!("'{}': {}", second.unwrap(), e))?),
         None => None,
     };
 
     match first.as_str() {
-        "none" => Ok(Border::None),
-        "normal" => Ok(Border::Normal(second)),
-        "pixel" => Ok(Border::Pixel(second)),
+        "none" => Ok(Border {
+            border: NodeBorder::None,
+            width: None,
+        }),
+        "normal" => Ok(Border {
+            border: NodeBorder::Normal,
+            width: second,
+        }),
+        "pixel" => Ok(Border {
+            border: NodeBorder::Pixel,
+            width: second,
+        }),
         s => Err(format!(
             "'{}': Expected one of: 'none', 'normal', 'pixel'",
             s
@@ -77,12 +101,9 @@ fn border_subcmd(matches: &clap::ArgMatches) {
             .map(|bs| border_parser(bs).unwrap()) // already validated by clap
             .collect();
 
-        for border in toggle_states.iter() {
-            println!("border: {:?}", border);
-        }
-
         // toggle states should be unique
-        // TODO: 'none' and 'pixel 0' might cause problems
+        // Note: i3 seems to differentiate between 'none' and 'pixel 0'
+        // even though they are effectively identical.
         let toggle_states_set: HashSet<Border> = toggle_states.iter().cloned().collect();
         if toggle_states_set.len() != toggle_states.len() {
             eprintln!("Set of border states to toggle should be unique");
@@ -94,16 +115,53 @@ fn border_subcmd(matches: &clap::ArgMatches) {
         let tree = connection.get_tree().unwrap();
         let focused = i3_find_focused_node(&tree).unwrap();
 
-        // TODO: border_width seems to be in units of scaled pixels
-        let border_width = focused.current_border_width;
-        let current_border = match &focused.border {
-            NodeBorder::None => Border::None,
-            NodeBorder::Normal => Border::Normal(Some(border_width)),
-            NodeBorder::Pixel => Border::Pixel(Some(border_width)),
-            _ => Border::None,
+        // current_border_width seems to be in units of DPI-scaled pixels. There
+        // doesn't appear to be an easy, robust way to convert back, so we'll only
+        // match against the border type when cycling, and ignore the width. This
+        // means that you won't be able to, e.g. toggle ["pixel 2" "pixel 5"
+        // "pixel 10"], but you will be able to toggle ["none" "pixel 2" "normal 4"].
+        let current_state = Border {
+            border: focused.border.clone(),
+            width: Some(focused.current_border_width),
         };
 
-        println!("current border: {:?}", current_border);
+        // find index of current_state in toggle_states, otherwise use index 0
+        let current_state_id: usize = toggle_states
+            .iter()
+            .enumerate()
+            .find(|s| s.1 == &current_state)
+            .map(|s| s.0)
+            .unwrap_or(0);
+
+        // pick the next state from toggle_states, wrapping around if necessary
+        let next_state = toggle_states
+            .iter()
+            .cycle()
+            .skip(current_state_id + 1)
+            .next()
+            .unwrap();
+
+        let maybe_width: String = next_state
+            .width
+            .map(|w| w.to_string())
+            .unwrap_or(String::from(""));
+
+        match next_state.border {
+            NodeBorder::None => {
+                connection.run_command("border none").unwrap();
+            }
+            NodeBorder::Normal => {
+                connection
+                    .run_command(format!("border normal {}", maybe_width).as_str())
+                    .unwrap();
+            }
+            NodeBorder::Pixel => {
+                connection
+                    .run_command(format!("border pixel {}", maybe_width).as_str())
+                    .unwrap();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -132,10 +190,40 @@ mod tests {
 
     #[test]
     fn test_border_parser() {
-        assert_eq!(border_parser("none"), Ok(Border::None));
-        assert_eq!(border_parser("normal"), Ok(Border::Normal(None)));
-        assert_eq!(border_parser("pixel"), Ok(Border::Pixel(None)));
-        assert_eq!(border_parser("normal 2"), Ok(Border::Normal(Some(2))));
-        assert_eq!(border_parser("pixel 2"), Ok(Border::Pixel(Some(2))));
+        assert_eq!(
+            border_parser("none"),
+            Ok(Border {
+                border: NodeBorder::None,
+                width: None
+            })
+        );
+        assert_eq!(
+            border_parser("normal"),
+            Ok(Border {
+                border: NodeBorder::Normal,
+                width: None
+            })
+        );
+        assert_eq!(
+            border_parser("pixel"),
+            Ok(Border {
+                border: NodeBorder::Pixel,
+                width: None
+            })
+        );
+        assert_eq!(
+            border_parser("normal 2"),
+            Ok(Border {
+                border: NodeBorder::Normal,
+                width: Some(2)
+            })
+        );
+        assert_eq!(
+            border_parser("pixel 2"),
+            Ok(Border {
+                border: NodeBorder::Pixel,
+                width: Some(2)
+            })
+        );
     }
 }
