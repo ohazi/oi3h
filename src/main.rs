@@ -1,6 +1,6 @@
 use clap;
 
-use i3ipc::reply::{Node, NodeBorder};
+use i3ipc::reply::{Node, NodeBorder, NodeType, Workspaces};
 use i3ipc::I3Connection;
 
 use std::collections::HashSet;
@@ -25,10 +25,12 @@ fn main() {
                         .validator(border_validator),
                 ),
         )
+        .subcommand(clap::SubCommand::with_name("window").about("Find largest window"))
         .get_matches();
 
     match matches.subcommand() {
         ("border", Some(border_matches)) => border_subcmd(border_matches),
+        ("window", Some(window_matches)) => window_subcmd(window_matches),
         _ => unreachable!(),
     }
 }
@@ -182,6 +184,69 @@ fn i3_find_focused_node(parent: &Node) -> Option<&Node> {
         } else {
             None
         }
+    }
+}
+
+fn window_subcmd(_matches: &clap::ArgMatches) {
+    let mut connection = I3Connection::connect().unwrap();
+    let tree = connection.get_tree().unwrap();
+    let workspaces = connection.get_workspaces().unwrap();
+    let focused = i3_find_focused_node(&tree).unwrap();
+    let workspace = i3_find_focused_workspace(&workspaces, &tree).unwrap();
+    let largest = i3_find_largest_tiled_window(&workspace).unwrap();
+
+    println!("focused window: {:?}", focused.name);
+    println!("focused workspace: {:?}", workspace.name);
+    println!("largest window: {:?}", largest.name);
+}
+
+fn i3_larger_node<'a>(n: Option<&'a Node>, m: Option<&'a Node>) -> Option<&'a Node> {
+    m.map_or(n, |mm| {
+        n.map_or(m, |nn| {
+            let nn_size = nn.window_rect.2 * nn.window_rect.3;
+            let mm_size = mm.window_rect.2 * mm.window_rect.3;
+            if nn_size > mm_size {
+                n
+            } else {
+                m
+            }
+        })
+    })
+}
+
+fn i3_find_largest_tiled_window(parent: &Node) -> Option<&Node> {
+    parent
+        .nodes
+        .iter()
+        .fold(None, |largest, node| match node.nodetype {
+            NodeType::Con => node.window.map_or_else(
+                || i3_larger_node(largest, i3_find_largest_tiled_window(node)),
+                |_w| i3_larger_node(largest, Some(node)),
+            ),
+            _ => i3_larger_node(largest, i3_find_largest_tiled_window(node)),
+        })
+}
+
+fn i3_find_focused_workspace<'a>(workspaces: &Workspaces, tree: &'a Node) -> Option<&'a Node> {
+    let workspace = workspaces.workspaces.iter().find(|w| w.focused == true).unwrap().name.as_str();
+    i3_tree_find(tree, &|n: &&Node| {
+        n.name.as_ref().map(|n| n.as_str()).unwrap_or("") == workspace
+    })
+}
+
+fn i3_tree_find<'a, P>(parent: &'a Node, predicate: &P) -> Option<&'a Node> 
+    where P: Fn(&&Node) -> bool,
+{
+    if predicate(&parent) {
+        Some(parent)
+    } else {
+        for child in &parent.nodes {
+            let res = i3_tree_find(child, predicate);
+            if res.is_some() {
+                return res;
+            }
+        }
+        None
     }
 }
 
