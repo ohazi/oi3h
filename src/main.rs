@@ -12,6 +12,15 @@ fn main() {
         .about(clap::crate_description!())
         .author(clap::crate_authors!())
         .setting(clap::AppSettings::SubcommandRequiredElseHelp)
+        .arg(
+            clap::Arg::with_name("criteria")
+                .long("criteria")
+                .short("c")
+                .help("i3 command criteria for subsequent commands")
+                .takes_value(true)
+                .global(true)
+                .default_value(""),
+        )
         .subcommand(
             clap::SubCommand::with_name("border")
                 .about("Modify window border")
@@ -100,6 +109,27 @@ fn border_subcmd(matches: &clap::ArgMatches) {
     let tree = connection.get_tree().unwrap();
     let focused = i3_find_focused_node(&tree).unwrap();
 
+    let criteria = matches.value_of("criteria").unwrap();
+
+    // TODO: should current_state always come from focused window, or does it
+    // ever make sense to use a different window based on the command criteria?
+    // i3's border command performs the criteria match first, then performs the
+    // toggle on each matching node individually. I don't think we can do that
+    // easily if we want to reuse i3's criteria matching system.
+    //
+    // An example of when a user may want different behavior is if they want a
+    // binding to toggle the borders on floating windows:
+    // bindsym $mod+t exec --no-startup-id "oi3h -c floating border -t normal pixel"
+    //
+    // This wouldn't work unless a floating window happens to be focused when
+    // the keybinding is used, which may be annoying. i3's border toggle
+    // command would work correctly in this case.
+    //
+    // A robust solution would require re-implementing command criteria in
+    // order to find the matching nodes here. It would then be possible to run
+    // a specific command on each node based on its current state rather than
+    // one command on all nodes based on the focused window's current state.
+
     // current_border_width seems to be in units of DPI-scaled pixels. There
     // doesn't appear to be an easy, robust way to convert back, so we'll only
     // match against the border type when cycling, and ignore the width. This
@@ -149,16 +179,18 @@ fn border_subcmd(matches: &clap::ArgMatches) {
 
         match next_state.border {
             NodeBorder::None => {
-                connection.run_command("border none").unwrap();
+                connection
+                    .run_command(format!("[{}] border none", criteria).as_str())
+                    .unwrap();
             }
             NodeBorder::Normal => {
                 connection
-                    .run_command(format!("border normal {}", maybe_width).as_str())
+                    .run_command(format!("[{}] border normal {}", criteria, maybe_width).as_str())
                     .unwrap();
             }
             NodeBorder::Pixel => {
                 connection
-                    .run_command(format!("border pixel {}", maybe_width).as_str())
+                    .run_command(format!("[{}] border pixel {}", criteria, maybe_width).as_str())
                     .unwrap();
             }
             _ => {}
@@ -228,14 +260,21 @@ fn i3_find_largest_tiled_window(parent: &Node) -> Option<&Node> {
 }
 
 fn i3_find_focused_workspace<'a>(workspaces: &Workspaces, tree: &'a Node) -> Option<&'a Node> {
-    let workspace = workspaces.workspaces.iter().find(|w| w.focused == true).unwrap().name.as_str();
+    let workspace = workspaces
+        .workspaces
+        .iter()
+        .find(|w| w.focused == true)
+        .unwrap()
+        .name
+        .as_str();
     i3_tree_find(tree, &|n: &&Node| {
         n.name.as_ref().map(|n| n.as_str()).unwrap_or("") == workspace
     })
 }
 
-fn i3_tree_find<'a, P>(parent: &'a Node, predicate: &P) -> Option<&'a Node> 
-    where P: Fn(&&Node) -> bool,
+fn i3_tree_find<'a, P>(parent: &'a Node, predicate: &P) -> Option<&'a Node>
+where
+    P: Fn(&&Node) -> bool,
 {
     if predicate(&parent) {
         Some(parent)
