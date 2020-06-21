@@ -3,6 +3,8 @@ use clap;
 use i3ipc::reply::{Node, NodeBorder, NodeType, Workspaces};
 use i3ipc::I3Connection;
 
+use regex::Regex;
+
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
@@ -100,17 +102,17 @@ fn get_focused_con_id() -> Result<usize, String> {
     Ok(focused.id as usize)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum Match {
-    Class(String),
-    Instance(String),
-    WindowRole(String),
+    Class(Regex),
+    Instance(Regex),
+    WindowRole(Regex),
     WindowType(WindowType),
     Id(u32),
-    Title(String),
+    Title(Regex),
     Urgent(Urgent),
-    Workspace(String),
-    ConMark(String),
+    Workspace(Regex),
+    ConMark(Regex),
     ConId(usize),
     Floating,
     Tiling,
@@ -125,15 +127,27 @@ fn parse_criteria(input: &str) -> Result<Vec<Match>, String> {
                 "class" => token_split
                     .get(1)
                     .ok_or("class requires a parameter".to_string())
-                    .and_then(|param| Ok(Match::Class(param.to_string()))),
+                    .and_then(|param| {
+                        Regex::new(param)
+                            .map(|r| Match::Class(r))
+                            .map_err(|e| format!("class: {}", e))
+                    }),
                 "instance" => token_split
                     .get(1)
                     .ok_or("instance requires a parameter".to_string())
-                    .and_then(|param| Ok(Match::Instance(param.to_string()))),
+                    .and_then(|param| {
+                        Regex::new(param)
+                            .map(|r| Match::Instance(r))
+                            .map_err(|e| format!("instance: {}", e))
+                    }),
                 "window_role" => token_split
                     .get(1)
                     .ok_or("window_role requires a parameter".to_string())
-                    .and_then(|param| Ok(Match::WindowRole(param.to_string()))),
+                    .and_then(|param| {
+                        Regex::new(param)
+                            .map(|r| Match::WindowRole(r))
+                            .map_err(|e| format!("window_role: {}", e))
+                    }),
                 "window_type" => token_split
                     .get(1)
                     .ok_or("window_type requires a parameter".to_string())
@@ -150,7 +164,11 @@ fn parse_criteria(input: &str) -> Result<Vec<Match>, String> {
                 "title" => token_split
                     .get(1)
                     .ok_or("title requires a parameter".to_string())
-                    .and_then(|param| Ok(Match::Title(param.to_string()))),
+                    .and_then(|param| {
+                        Regex::new(param)
+                            .map(|r| Match::Title(r))
+                            .map_err(|e| format!("title: {}", e))
+                    }),
                 "urgent" => token_split
                     .get(1)
                     .ok_or("urgent requires a parameter".to_string())
@@ -158,11 +176,19 @@ fn parse_criteria(input: &str) -> Result<Vec<Match>, String> {
                 "workspace" => token_split
                     .get(1)
                     .ok_or("workspace requires a parameter".to_string())
-                    .and_then(|param| Ok(Match::Workspace(param.to_string()))),
+                    .and_then(|param| {
+                        Regex::new(param)
+                            .map(|r| Match::Workspace(r))
+                            .map_err(|e| format!("workspace: {}", e))
+                    }),
                 "con_mark" => token_split
                     .get(1)
                     .ok_or("con_mark requires a parameter".to_string())
-                    .and_then(|param| Ok(Match::ConMark(param.to_string()))),
+                    .and_then(|param| {
+                        Regex::new(param)
+                            .map(|r| Match::ConMark(r))
+                            .map_err(|e| format!("con_mark: {}", e))
+                    }),
                 "con_id" => token_split
                     .get(1)
                     .ok_or("con_id requires a parameter".to_string())

@@ -11,3 +11,4 @@ description = "Oren's i3 Helper"
 [dependencies]
 i3ipc = { version = "0.10.1", features = ["i3-4-14"] }
 clap = "2.33.1"
+regex = "1.3.9"
