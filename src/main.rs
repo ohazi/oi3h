@@ -18,7 +18,6 @@ fn main() {
                 .short("c")
                 .help("i3 command criteria for subsequent commands")
                 .takes_value(true)
-                .global(true)
                 .default_value(""),
         )
         .subcommand(
@@ -37,11 +36,149 @@ fn main() {
         .subcommand(clap::SubCommand::with_name("window").about("Find largest window"))
         .get_matches();
 
+    let criteria = parse_criteria(matches.value_of("criteria").unwrap());
+    println!("Criteria: {:?}", criteria);
+
     match matches.subcommand() {
         ("border", Some(border_matches)) => border_subcmd(border_matches),
         ("window", Some(window_matches)) => window_subcmd(window_matches),
         _ => unreachable!(),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowType {
+    Normal,
+    Dialog,
+    Utility,
+    Toolbar,
+    Splash,
+    Menu,
+    DropdownMenu,
+    PopupMenu,
+    Tooltip,
+    Notification,
+}
+
+fn parse_window_type(input: &str) -> Result<WindowType, String> {
+    match input.to_lowercase().as_str() {
+        "normal" => Ok(WindowType::Normal),
+        "dialog" => Ok(WindowType::Dialog),
+        "utility" => Ok(WindowType::Utility),
+        "toolbar" => Ok(WindowType::Toolbar),
+        "splash" => Ok(WindowType::Splash),
+        "menu" => Ok(WindowType::Menu),
+        "dropdown_menu" => Ok(WindowType::DropdownMenu),
+        "popup_menu" => Ok(WindowType::PopupMenu),
+        "tooltip" => Ok(WindowType::Tooltip),
+        "notification" => Ok(WindowType::Notification),
+        s => Err(format!("Unknown window_type: '{}'", s)),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Urgent {
+    Latest,
+    Oldest,
+}
+
+fn parse_urgent(input: &str) -> Result<Urgent, String> {
+    match input.to_lowercase().as_str() {
+        "latest" | "newest" | "recent" | "last" => Ok(Urgent::Latest),
+        "oldest" | "first" => Ok(Urgent::Oldest),
+        s => Err(format!("Unknown urgency: '{}'", s)),
+    }
+}
+
+fn get_focused_con_id() -> Result<usize, String> {
+    // TODO: We should probably only do this connection setup stuff once
+    let mut connection = I3Connection::connect().map_err(|e| format!("{}", e))?;
+    let tree = connection.get_tree().map_err(|e| format!("{}", e))?;
+    let focused = i3_find_focused_node(&tree).ok_or("Unable to find focused node")?;
+
+    // id is clearly a pointer, not sure why i3ipc thinks it's an i64...
+    Ok(focused.id as usize)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Match {
+    Class(String),
+    Instance(String),
+    WindowRole(String),
+    WindowType(WindowType),
+    Id(u32),
+    Title(String),
+    Urgent(Urgent),
+    Workspace(String),
+    ConMark(String),
+    ConId(usize),
+    Floating,
+    Tiling,
+}
+
+fn parse_criteria(input: &str) -> Result<Vec<Match>, String> {
+    input
+        .split_whitespace()
+        .map(|token| {
+            let token_split: Vec<&str> = token.splitn(2, '=').collect();
+            match token_split[0].to_lowercase().as_str() {
+                "class" => token_split
+                    .get(1)
+                    .ok_or("class requires a parameter".to_string())
+                    .and_then(|param| Ok(Match::Class(param.to_string()))),
+                "instance" => token_split
+                    .get(1)
+                    .ok_or("instance requires a parameter".to_string())
+                    .and_then(|param| Ok(Match::Instance(param.to_string()))),
+                "window_role" => token_split
+                    .get(1)
+                    .ok_or("window_role requires a parameter".to_string())
+                    .and_then(|param| Ok(Match::WindowRole(param.to_string()))),
+                "window_type" => token_split
+                    .get(1)
+                    .ok_or("window_type requires a parameter".to_string())
+                    .and_then(|param| parse_window_type(param).map(|wt| Match::WindowType(wt))),
+                "id" => token_split
+                    .get(1)
+                    .ok_or("id requires a parameter".to_string())
+                    .and_then(|param| {
+                        param
+                            .parse()
+                            .map(|parsed| Match::Id(parsed))
+                            .map_err(|e| format!("id: {}", e))
+                    }),
+                "title" => token_split
+                    .get(1)
+                    .ok_or("title requires a parameter".to_string())
+                    .and_then(|param| Ok(Match::Title(param.to_string()))),
+                "urgent" => token_split
+                    .get(1)
+                    .ok_or("urgent requires a parameter".to_string())
+                    .and_then(|param| parse_urgent(param).map(|u| Match::Urgent(u))),
+                "workspace" => token_split
+                    .get(1)
+                    .ok_or("workspace requires a parameter".to_string())
+                    .and_then(|param| Ok(Match::Workspace(param.to_string()))),
+                "con_mark" => token_split
+                    .get(1)
+                    .ok_or("con_mark requires a parameter".to_string())
+                    .and_then(|param| Ok(Match::ConMark(param.to_string()))),
+                "con_id" => token_split
+                    .get(1)
+                    .ok_or("con_id requires a parameter".to_string())
+                    .and_then(|param| match *param {
+                        "__focused__" => get_focused_con_id().map(|cid| Match::ConId(cid)),
+                        param => param
+                            .parse()
+                            .map(|parsed| Match::ConId(parsed))
+                            .map_err(|e| format!("con_id: {}", e)),
+                    }),
+                "floating" => Ok(Match::Floating),
+                "tiling" => Ok(Match::Tiling),
+                _ => Err(format!("Unknown criteria: '{}'", token)),
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Eq)]
@@ -67,7 +204,7 @@ impl Hash for Border {
     }
 }
 
-fn border_parser(input: &str) -> Result<Border, String> {
+fn parse_border(input: &str) -> Result<Border, String> {
     let mut tokens = input.split_whitespace();
     let first = tokens
         .next()
@@ -100,7 +237,7 @@ fn border_parser(input: &str) -> Result<Border, String> {
 }
 
 fn border_validator(input: String) -> Result<(), String> {
-    border_parser(input.as_str())?;
+    parse_border(input.as_str())?;
     Ok(())
 }
 
@@ -144,7 +281,7 @@ fn border_subcmd(matches: &clap::ArgMatches) {
         let toggle_states: Vec<Border> = matches
             .values_of("toggle")
             .unwrap()
-            .map(|bs| border_parser(bs).unwrap()) // already validated by clap
+            .map(|bs| parse_border(bs).unwrap()) // already validated by clap
             .collect();
 
         // toggle states should be unique
@@ -175,7 +312,7 @@ fn border_subcmd(matches: &clap::ArgMatches) {
         let maybe_width: String = next_state
             .width
             .map(|w| w.to_string())
-            .unwrap_or(String::from(""));
+            .unwrap_or("".to_string());
 
         match next_state.border {
             NodeBorder::None => {
@@ -294,37 +431,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_border_parser() {
+    fn test_parse_border() {
         assert_eq!(
-            border_parser("none"),
+            parse_border("none"),
             Ok(Border {
                 border: NodeBorder::None,
                 width: None
             })
         );
         assert_eq!(
-            border_parser("normal"),
+            parse_border("normal"),
             Ok(Border {
                 border: NodeBorder::Normal,
                 width: None
             })
         );
         assert_eq!(
-            border_parser("pixel"),
+            parse_border("pixel"),
             Ok(Border {
                 border: NodeBorder::Pixel,
                 width: None
             })
         );
         assert_eq!(
-            border_parser("normal 2"),
+            parse_border("normal 2"),
             Ok(Border {
                 border: NodeBorder::Normal,
                 width: Some(2)
             })
         );
         assert_eq!(
-            border_parser("pixel 2"),
+            parse_border("pixel 2"),
             Ok(Border {
                 border: NodeBorder::Pixel,
                 width: Some(2)
