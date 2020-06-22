@@ -20,7 +20,11 @@ fn main() {
                 .short("c")
                 .help("i3 command criteria for subsequent commands")
                 .takes_value(true)
-                .default_value(""),
+                .default_value("[")
+                .hide_default_value(true)
+                .multiple(true)
+                .value_terminator("]")
+                .validator(validate_criteria),
         )
         .subcommand(
             clap::SubCommand::with_name("border")
@@ -32,13 +36,19 @@ fn main() {
                         .help("Toggle between a list of border styles")
                         .takes_value(true)
                         .multiple(true)
-                        .validator(border_validator),
+                        .validator(validate_border),
                 ),
         )
         .subcommand(clap::SubCommand::with_name("window").about("Find largest window"))
         .get_matches();
 
-    let criteria = parse_criteria(matches.value_of("criteria").unwrap());
+    let criteria: Result<Vec<Match>, String> = match matches.values_of("criteria") {
+        Some(cr_args) => cr_args
+            .filter_map(|cr| parse_criteria(cr).transpose())
+            .collect(),
+        None => Ok(vec![]),
+    };
+
     println!("Criteria: {:?}", criteria);
 
     match matches.subcommand() {
@@ -118,93 +128,102 @@ enum Match {
     Tiling,
 }
 
-fn parse_criteria(input: &str) -> Result<Vec<Match>, String> {
-    input
-        .split_whitespace()
-        .map(|token| {
-            let token_split: Vec<&str> = token.splitn(2, '=').collect();
-            match token_split[0].to_lowercase().as_str() {
-                "class" => token_split
-                    .get(1)
-                    .ok_or("class requires a parameter".to_string())
-                    .and_then(|param| {
-                        Regex::new(param)
-                            .map(|r| Match::Class(r))
-                            .map_err(|e| format!("class: {}", e))
-                    }),
-                "instance" => token_split
-                    .get(1)
-                    .ok_or("instance requires a parameter".to_string())
-                    .and_then(|param| {
-                        Regex::new(param)
-                            .map(|r| Match::Instance(r))
-                            .map_err(|e| format!("instance: {}", e))
-                    }),
-                "window_role" => token_split
-                    .get(1)
-                    .ok_or("window_role requires a parameter".to_string())
-                    .and_then(|param| {
-                        Regex::new(param)
-                            .map(|r| Match::WindowRole(r))
-                            .map_err(|e| format!("window_role: {}", e))
-                    }),
-                "window_type" => token_split
-                    .get(1)
-                    .ok_or("window_type requires a parameter".to_string())
-                    .and_then(|param| parse_window_type(param).map(|wt| Match::WindowType(wt))),
-                "id" => token_split
-                    .get(1)
-                    .ok_or("id requires a parameter".to_string())
-                    .and_then(|param| {
-                        param
-                            .parse()
-                            .map(|parsed| Match::Id(parsed))
-                            .map_err(|e| format!("id: {}", e))
-                    }),
-                "title" => token_split
-                    .get(1)
-                    .ok_or("title requires a parameter".to_string())
-                    .and_then(|param| {
-                        Regex::new(param)
-                            .map(|r| Match::Title(r))
-                            .map_err(|e| format!("title: {}", e))
-                    }),
-                "urgent" => token_split
-                    .get(1)
-                    .ok_or("urgent requires a parameter".to_string())
-                    .and_then(|param| parse_urgent(param).map(|u| Match::Urgent(u))),
-                "workspace" => token_split
-                    .get(1)
-                    .ok_or("workspace requires a parameter".to_string())
-                    .and_then(|param| {
-                        Regex::new(param)
-                            .map(|r| Match::Workspace(r))
-                            .map_err(|e| format!("workspace: {}", e))
-                    }),
-                "con_mark" => token_split
-                    .get(1)
-                    .ok_or("con_mark requires a parameter".to_string())
-                    .and_then(|param| {
-                        Regex::new(param)
-                            .map(|r| Match::ConMark(r))
-                            .map_err(|e| format!("con_mark: {}", e))
-                    }),
-                "con_id" => token_split
-                    .get(1)
-                    .ok_or("con_id requires a parameter".to_string())
-                    .and_then(|param| match *param {
-                        "__focused__" => get_focused_con_id().map(|cid| Match::ConId(cid)),
-                        param => param
-                            .parse()
-                            .map(|parsed| Match::ConId(parsed))
-                            .map_err(|e| format!("con_id: {}", e)),
-                    }),
-                "floating" => Ok(Match::Floating),
-                "tiling" => Ok(Match::Tiling),
-                _ => Err(format!("Unknown criteria: '{}'", token)),
-            }
-        })
-        .collect()
+fn validate_criteria(criteria: String) -> Result<(), String> {
+    parse_criteria(criteria.as_str())?;
+    Ok(())
+}
+
+fn parse_criteria(input: &str) -> Result<Option<Match>, String> {
+    let mut token_split: Vec<&str> = input.splitn(2, '=').collect();
+    if let Some(param) = token_split.get_mut(1) {
+        // for compatibility with i3 criteria...
+        if param.starts_with('"') && param.ends_with('"') && param.len() > 1 {
+            *param = param.get(1..(param.len() - 1)).unwrap();
+        }
+    }
+    let token_split = token_split;
+    match token_split[0].to_lowercase().as_str() {
+        "[" => Ok(None),
+        "]" => Ok(None), // Shouldn't need this with clap terminator, but for completeness...
+        "class" => token_split
+            .get(1)
+            .ok_or("class requires a parameter".to_string())
+            .and_then(|param| {
+                Regex::new(param)
+                    .map(|r| Some(Match::Class(r)))
+                    .map_err(|e| format!("class: {}", e))
+            }),
+        "instance" => token_split
+            .get(1)
+            .ok_or("instance requires a parameter".to_string())
+            .and_then(|param| {
+                Regex::new(param)
+                    .map(|r| Some(Match::Instance(r)))
+                    .map_err(|e| format!("instance: {}", e))
+            }),
+        "window_role" => token_split
+            .get(1)
+            .ok_or("window_role requires a parameter".to_string())
+            .and_then(|param| {
+                Regex::new(param)
+                    .map(|r| Some(Match::WindowRole(r)))
+                    .map_err(|e| format!("window_role: {}", e))
+            }),
+        "window_type" => token_split
+            .get(1)
+            .ok_or("window_type requires a parameter".to_string())
+            .and_then(|param| parse_window_type(param).map(|wt| Some(Match::WindowType(wt)))),
+        "id" => token_split
+            .get(1)
+            .ok_or("id requires a parameter".to_string())
+            .and_then(|param| {
+                param
+                    .parse() // TODO: "id" should also parse from hex
+                    .map(|parsed| Some(Match::Id(parsed)))
+                    .map_err(|e| format!("id: {}", e))
+            }),
+        "title" => token_split
+            .get(1)
+            .ok_or("title requires a parameter".to_string())
+            .and_then(|param| {
+                Regex::new(param)
+                    .map(|r| Some(Match::Title(r)))
+                    .map_err(|e| format!("title: {}", e))
+            }),
+        "urgent" => token_split
+            .get(1)
+            .ok_or("urgent requires a parameter".to_string())
+            .and_then(|param| parse_urgent(param).map(|u| Some(Match::Urgent(u)))),
+        "workspace" => token_split
+            .get(1)
+            .ok_or("workspace requires a parameter".to_string())
+            .and_then(|param| {
+                Regex::new(param)
+                    .map(|r| Some(Match::Workspace(r)))
+                    .map_err(|e| format!("workspace: {}", e))
+            }),
+        "con_mark" => token_split
+            .get(1)
+            .ok_or("con_mark requires a parameter".to_string())
+            .and_then(|param| {
+                Regex::new(param)
+                    .map(|r| Some(Match::ConMark(r)))
+                    .map_err(|e| format!("con_mark: {}", e))
+            }),
+        "con_id" => token_split
+            .get(1)
+            .ok_or("con_id requires a parameter".to_string())
+            .and_then(|param| match *param {
+                "__focused__" => get_focused_con_id().map(|cid| Some(Match::ConId(cid))),
+                param => param
+                    .parse() // TODO: "con_id" should also parse from hex
+                    .map(|parsed| Some(Match::ConId(parsed)))
+                    .map_err(|e| format!("con_id: {}", e)),
+            }),
+        "floating" => Ok(Some(Match::Floating)),
+        "tiling" => Ok(Some(Match::Tiling)),
+        _ => Err(format!("Unknown criteria: '{}'", input)),
+    }
 }
 
 #[derive(Debug, Clone, Eq)]
@@ -262,8 +281,8 @@ fn parse_border(input: &str) -> Result<Border, String> {
     }
 }
 
-fn border_validator(input: String) -> Result<(), String> {
-    parse_border(input.as_str())?;
+fn validate_border(border: String) -> Result<(), String> {
+    parse_border(border.as_str())?;
     Ok(())
 }
 
