@@ -18,7 +18,7 @@ fn main() {
             clap::Arg::with_name("criteria")
                 .long("criteria")
                 .short("c")
-                .help("i3 command criteria for subsequent commands")
+                .help("i3 command criteria for subsequent commands\n(terminate list with single ']' argument)")
                 .takes_value(true)
                 .default_value("[")
                 .hide_default_value(true)
@@ -42,12 +42,12 @@ fn main() {
         .subcommand(clap::SubCommand::with_name("window").about("Find largest window"))
         .get_matches();
 
-    let criteria: Result<Vec<Match>, String> = match matches.values_of("criteria") {
-        Some(cr_args) => cr_args
+    let criteria: Vec<Match> = matches.values_of("criteria").map_or(vec![], |cr_args| {
+        cr_args
             .filter_map(|cr| parse_criteria(cr).transpose())
-            .collect(),
-        None => Ok(vec![]),
-    };
+            .collect::<Result<Vec<Match>, String>>()
+            .unwrap() // already validated by clap
+    });
 
     println!("Criteria: {:?}", criteria);
 
@@ -102,6 +102,23 @@ fn parse_urgent(input: &str) -> Result<Urgent, String> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConId {
+    Focused,
+    Id(usize),
+}
+
+fn parse_con_id(input: &str) -> Result<ConId, String> {
+    match input {
+        "__focused__" => Ok(ConId::Focused),
+        param => param
+            .parse() // TODO: "con_id" should also parse from hex
+            .map(|parsed| ConId::Id(parsed))
+            .map_err(|e| format!("con_id: {}", e)),
+    }
+}
+
+#[allow(dead_code)]
 fn get_focused_con_id() -> Result<usize, String> {
     // TODO: We should probably only do this connection setup stuff once
     let mut connection = I3Connection::connect().map_err(|e| format!("{}", e))?;
@@ -123,7 +140,7 @@ enum Match {
     Urgent(Urgent),
     Workspace(Regex),
     ConMark(Regex),
-    ConId(usize),
+    ConId(ConId),
     Floating,
     Tiling,
 }
@@ -213,13 +230,7 @@ fn parse_criteria(input: &str) -> Result<Option<Match>, String> {
         "con_id" => token_split
             .get(1)
             .ok_or("con_id requires a parameter".to_string())
-            .and_then(|param| match *param {
-                "__focused__" => get_focused_con_id().map(|cid| Some(Match::ConId(cid))),
-                param => param
-                    .parse() // TODO: "con_id" should also parse from hex
-                    .map(|parsed| Some(Match::ConId(parsed)))
-                    .map_err(|e| format!("con_id: {}", e)),
-            }),
+            .and_then(|param| parse_con_id(param).map(|ci| Some(Match::ConId(ci)))),
         "floating" => Ok(Some(Match::Floating)),
         "tiling" => Ok(Some(Match::Tiling)),
         _ => Err(format!("Unknown criteria: '{}'", input)),
@@ -449,26 +460,68 @@ fn i3_find_focused_workspace<'a>(workspaces: &Workspaces, tree: &'a Node) -> Opt
         .unwrap()
         .name
         .as_str();
-    i3_tree_find(tree, &|n: &&Node| {
+    i3_tree_find_first(tree, |n| {
         n.name.as_ref().map(|n| n.as_str()).unwrap_or("") == workspace
     })
 }
 
-fn i3_tree_find<'a, P>(parent: &'a Node, predicate: &P) -> Option<&'a Node>
+fn i3_tree_find_first<P>(parent: &Node, mut predicate: P) -> Option<&Node>
 where
-    P: Fn(&&Node) -> bool,
+    P: FnMut(&Node) -> bool,
 {
-    if predicate(&parent) {
+    i3_tree_find_first_helper(parent, &mut predicate)
+}
+
+fn i3_tree_find_first_helper<'a, P>(parent: &'a Node, predicate: &mut P) -> Option<&'a Node>
+where
+    P: FnMut(&Node) -> bool,
+{
+    if predicate(parent) {
         Some(parent)
     } else {
-        for child in &parent.nodes {
-            let res = i3_tree_find(child, predicate);
+        for child in parent.nodes.iter() {
+            let res = i3_tree_find_first_helper(child, predicate);
+            if res.is_some() {
+                return res;
+            }
+        }
+        for child in parent.floating_nodes.iter() {
+            let res = i3_tree_find_first_helper(child, predicate);
             if res.is_some() {
                 return res;
             }
         }
         None
     }
+}
+
+#[allow(dead_code)]
+fn i3_tree_find_all<P>(parent: &Node, mut predicate: P) -> Vec<&Node>
+where
+    P: FnMut(&Node) -> bool,
+{
+    let res: Vec<&Node> = vec![];
+    i3_tree_find_all_helper(parent, &mut predicate, res)
+}
+
+fn i3_tree_find_all_helper<'a, P>(
+    parent: &'a Node,
+    predicate: &mut P,
+    mut res: Vec<&'a Node>,
+) -> Vec<&'a Node>
+where
+    P: FnMut(&Node) -> bool,
+{
+    for child in parent.nodes.iter() {
+        res = i3_tree_find_all_helper(child, predicate, res);
+    }
+    for child in parent.floating_nodes.iter() {
+        res = i3_tree_find_all_helper(child, predicate, res);
+    }
+    if predicate(parent) {
+        res.push(parent);
+    }
+    res
 }
 
 #[cfg(test)]
