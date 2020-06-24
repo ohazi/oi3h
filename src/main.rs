@@ -111,10 +111,12 @@ enum ConId {
 fn parse_con_id(input: &str) -> Result<ConId, String> {
     match input {
         "__focused__" => Ok(ConId::Focused),
-        param => param
-            .parse() // TODO: "con_id" should also parse from hex
-            .map(|parsed| ConId::Id(parsed))
-            .map_err(|e| format!("con_id: {}", e)),
+        param => match param.starts_with("0x") {
+            true => usize::from_str_radix(&param[2..], 16),
+            false => param.parse(),
+        }
+        .map(|parsed| ConId::Id(parsed))
+        .map_err(|e| format!("con_id: {}", e)),
     }
 }
 
@@ -194,10 +196,12 @@ fn parse_criteria(input: &str) -> Result<Option<Match>, String> {
             .get(1)
             .ok_or("id requires a parameter".to_string())
             .and_then(|param| {
-                param
-                    .parse() // TODO: "id" should also parse from hex
-                    .map(|parsed| Some(Match::Id(parsed)))
-                    .map_err(|e| format!("id: {}", e))
+                match param.starts_with("0x") {
+                    true => u32::from_str_radix(&param[2..], 16),
+                    false => param.parse(),
+                }
+                .map(|parsed| Some(Match::Id(parsed)))
+                .map_err(|e| format!("id: {}", e))
             }),
         "title" => token_split
             .get(1)
