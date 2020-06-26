@@ -1,12 +1,16 @@
 use clap;
 
-use i3ipc::reply::{Node, NodeBorder, NodeType, Workspaces};
+use i3ipc::reply::{Node, NodeBorder, NodeType, Outputs, Workspaces};
 use i3ipc::I3Connection;
 
 use regex::Regex;
 
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+
+use std::marker::PhantomPinned;
+use std::pin::Pin;
+use std::ptr::NonNull;
 
 fn main() {
     let matches = clap::App::new(clap::crate_name!())
@@ -51,10 +55,124 @@ fn main() {
 
     println!("Criteria: {:?}", criteria);
 
+    let mut conn = I3Connection::connect().unwrap();
+    let data = I3Data::empty();
+
     match matches.subcommand() {
-        ("border", Some(border_matches)) => border_subcmd(border_matches),
-        ("window", Some(window_matches)) => window_subcmd(window_matches),
+        ("border", Some(border_matches)) => border_subcmd(border_matches, &mut conn, data),
+        ("window", Some(window_matches)) => window_subcmd(window_matches, &mut conn, data),
         _ => unreachable!(),
+    }
+}
+
+#[derive(Debug)]
+struct I3Data {
+    tree: Option<Node>,
+    outputs: Option<Outputs>,
+    workspaces: Option<Workspaces>,
+    focused_node: Option<NonNull<Node>>,
+    _pin: PhantomPinned,
+}
+
+impl I3Data {
+    fn empty() -> Pin<Box<I3Data>> {
+        let data = I3Data {
+            tree: None,
+            outputs: None,
+            workspaces: None,
+            focused_node: None,
+            _pin: PhantomPinned,
+        };
+
+        Box::pin(data)
+    }
+
+    fn get_tree<'a>(
+        mut self: Pin<&'a mut Self>,
+        conn: &mut I3Connection,
+    ) -> Result<&'a Node, String> {
+        if self.tree.is_none() {
+            unsafe {
+                let mut_ref = Pin::as_mut(&mut self);
+                Pin::get_unchecked_mut(mut_ref).tree =
+                    Some(conn.get_tree().map_err(|e| format!("{}", e))?);
+            }
+        }
+        Ok(self.into_ref().get_ref().tree.as_ref().unwrap())
+    }
+
+    fn tree<'a>(self: Pin<&'a Self>) -> Option<&'a Node> {
+        self.get_ref().tree.as_ref()
+    }
+
+    /*
+    #[allow(dead_code)]
+    fn get_outputs(self: Pin<&Self>, conn: &mut I3Connection) -> Result<&Outputs, String> {
+        if self.outputs.is_none() {
+            self.outputs = Some(conn.get_outputs().map_err(|e| format!("{}", e))?);
+        }
+        Ok(self.outputs.as_ref().unwrap())
+    }
+
+    #[allow(dead_code)]
+    fn outputs(self: Pin<&Self>) -> Option<&Outputs> {
+        self.get_ref().outputs.as_ref()
+    }
+    */
+
+    fn get_workspaces<'a>(
+        mut self: Pin<&'a mut Self>,
+        conn: &mut I3Connection,
+    ) -> Result<&'a Workspaces, String> {
+        if self.workspaces.is_none() {
+            unsafe {
+                let mut_ref = Pin::as_mut(&mut self);
+                Pin::get_unchecked_mut(mut_ref).workspaces =
+                    Some(conn.get_workspaces().map_err(|e| format!("{}", e))?);
+            }
+        }
+        Ok(Pin::into_ref(self).get_ref().workspaces.as_ref().unwrap())
+    }
+
+    fn workspaces<'a>(self: Pin<&'a Self>) -> Option<&'a Workspaces> {
+        self.get_ref().workspaces.as_ref()
+    }
+
+    fn get_focused_node<'a>(
+        mut self: Pin<&'a mut Self>,
+        conn: &mut I3Connection,
+    ) -> Result<&'a Node, String> {
+        if self.focused_node.is_none() {
+            self.as_mut().get_tree(conn)?;
+            let mut_ref = Pin::as_mut(&mut self);
+            let tree = mut_ref.tree.as_ref().unwrap();
+            unsafe {
+                Pin::get_unchecked_mut(mut_ref).focused_node = Some(NonNull::from(
+                    i3_find_focused_node(tree).ok_or("Unable to find focused node")?,
+                ));
+            }
+        }
+        unsafe {
+            Ok(self
+                .into_ref()
+                .get_ref()
+                .focused_node
+                .as_ref()
+                .unwrap()
+                .as_ref())
+        }
+    }
+
+    fn focused_node(self: Pin<&Self>) -> Option<&Node> {
+        if self.focused_node.is_none() {
+            None
+        } else {
+            unsafe {
+                Some(NonNull::as_ref(
+                    self.get_ref().focused_node.as_ref().unwrap(),
+                ))
+            }
+        }
     }
 }
 
@@ -301,12 +419,9 @@ fn validate_border(border: String) -> Result<(), String> {
     Ok(())
 }
 
-fn border_subcmd(matches: &clap::ArgMatches) {
-    let mut connection = I3Connection::connect().unwrap();
-    let tree = connection.get_tree().unwrap();
-    let focused = i3_find_focused_node(&tree).unwrap();
-
-    let criteria = matches.value_of("criteria").unwrap();
+fn border_subcmd(matches: &clap::ArgMatches, conn: &mut I3Connection, mut data: Pin<Box<I3Data>>) {
+    //let criteria = matches.value_of("criteria").unwrap();
+    let criteria = "";
 
     // TODO: should current_state always come from focused window, or does it
     // ever make sense to use a different window based on the command criteria?
@@ -332,6 +447,7 @@ fn border_subcmd(matches: &clap::ArgMatches) {
     // match against the border type when cycling, and ignore the width. This
     // means that you won't be able to, e.g. toggle ["pixel 2" "pixel 5"
     // "pixel 10"], but you will be able to toggle ["none" "pixel 2" "normal 4"].
+    let focused = data.as_mut().get_focused_node(conn).unwrap();
     let current_state = Border {
         border: focused.border.clone(),
         width: Some(focused.current_border_width),
@@ -376,18 +492,15 @@ fn border_subcmd(matches: &clap::ArgMatches) {
 
         match next_state.border {
             NodeBorder::None => {
-                connection
-                    .run_command(format!("[{}] border none", criteria).as_str())
+                conn.run_command(format!("[{}] border none", criteria).as_str())
                     .unwrap();
             }
             NodeBorder::Normal => {
-                connection
-                    .run_command(format!("[{}] border normal {}", criteria, maybe_width).as_str())
+                conn.run_command(format!("[{}] border normal {}", criteria, maybe_width).as_str())
                     .unwrap();
             }
             NodeBorder::Pixel => {
-                connection
-                    .run_command(format!("[{}] border pixel {}", criteria, maybe_width).as_str())
+                conn.run_command(format!("[{}] border pixel {}", criteria, maybe_width).as_str())
                     .unwrap();
             }
             _ => {}
@@ -416,12 +529,14 @@ fn i3_find_focused_node(parent: &Node) -> Option<&Node> {
     }
 }
 
-fn window_subcmd(_matches: &clap::ArgMatches) {
-    let mut connection = I3Connection::connect().unwrap();
-    let tree = connection.get_tree().unwrap();
-    let workspaces = connection.get_workspaces().unwrap();
-    let focused = i3_find_focused_node(&tree).unwrap();
-    let workspace = i3_find_focused_workspace(&workspaces, &tree).unwrap();
+fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, mut data: Pin<Box<I3Data>>) {
+    data.as_mut().get_tree(conn).unwrap();
+    data.as_mut().get_focused_node(conn).unwrap();
+    data.as_mut().get_workspaces(conn).unwrap();
+    let focused = data.as_ref().focused_node().unwrap();
+    let workspaces = data.as_ref().workspaces().unwrap();
+    let tree = data.as_ref().tree().unwrap();
+    let workspace = i3_find_focused_workspace(workspaces, tree).unwrap();
     let largest = i3_find_largest_tiled_window(&workspace).unwrap();
 
     println!("focused window: {:?}", focused.name);
