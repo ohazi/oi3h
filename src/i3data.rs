@@ -1,98 +1,61 @@
 use i3ipc::reply::{Node, Outputs, Workspaces};
 use i3ipc::I3Connection;
+use i3ipc::MessageError;
 
 use std::marker::PhantomPinned;
 use std::pin::Pin;
 use std::ptr::NonNull;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::criteria;
 
-#[derive(Debug)]
-pub struct I3Data {
-    tree: Option<Node>,
-    outputs: Option<Outputs>,
-    workspaces: Option<Workspaces>,
+struct I3Nodes {
+    full_tree: Node,
     focused_node: Option<NonNull<Node>>,
+    focused_workspace: Option<NonNull<Node>>,
     _pin: PhantomPinned,
 }
 
+pub struct I3Data {
+    nodes: Option<Pin<Box<I3Nodes>>>,
+    workspaces: RefCell<Option<Rc<Workspaces>>>,
+    outputs: RefCell<Option<Rc<Outputs>>>,
+}
+
 impl I3Data {
-    pub fn empty() -> Pin<Box<I3Data>> {
-        let data = I3Data {
-            tree: None,
-            outputs: None,
-            workspaces: None,
-            focused_node: None,
-            _pin: PhantomPinned,
-        };
-
-        Box::pin(data)
-    }
-
-    pub fn get_tree<'a>(
-        mut self: Pin<&'a mut Self>,
-        conn: &mut I3Connection,
-    ) -> Result<&'a Node, String> {
-        if self.tree.is_none() {
-            unsafe {
-                let mut_ref = Pin::as_mut(&mut self);
-                Pin::get_unchecked_mut(mut_ref).tree =
-                    Some(conn.get_tree().map_err(|e| format!("{}", e))?);
-            }
+    pub fn empty() -> I3Data {
+        I3Data {
+            nodes: None,
+            workspaces: RefCell::new(None),
+            outputs: RefCell::new(None),
         }
-        Ok(self.into_ref().get_ref().tree.as_ref().unwrap())
     }
 
-    pub fn tree<'a>(self: Pin<&'a Self>) -> Option<&'a Node> {
-        self.get_ref().tree.as_ref()
-    }
-
-    #[allow(dead_code)]
-    pub fn get_outputs<'a>(
-        mut self: Pin<&'a mut Self>,
-        conn: &mut I3Connection,
-    ) -> Result<&'a Outputs, String> {
-        if self.outputs.is_none() {
-            unsafe {
-                let mut_ref = Pin::as_mut(&mut self);
-                Pin::get_unchecked_mut(mut_ref).outputs =
-                    Some(conn.get_outputs().map_err(|e| format!("{}", e))?);
-            }
+    pub fn get_tree(&mut self, conn: &mut I3Connection) -> Result<&Node, String> {
+        if self.nodes.is_none() {
+            self.nodes = Some(Box::pin(I3Nodes {
+                full_tree: conn.get_tree().map_err(|e| format!("{}", e))?,
+                focused_node: None,
+                focused_workspace: None,
+                _pin: PhantomPinned,
+            }));
         }
-        Ok(self.into_ref().get_ref().outputs.as_ref().unwrap())
+        Ok(&self.nodes.as_ref().unwrap().as_ref().get_ref().full_tree)
     }
 
-    #[allow(dead_code)]
-    pub fn outputs(self: Pin<&Self>) -> Option<&Outputs> {
-        self.get_ref().outputs.as_ref()
+    pub fn tree(&self) -> Option<&Node> {
+        self.nodes.as_ref().map(|n| &n.as_ref().get_ref().full_tree)
     }
 
-    pub fn get_workspaces<'a>(
-        mut self: Pin<&'a mut Self>,
-        conn: &mut I3Connection,
-    ) -> Result<&'a Workspaces, String> {
-        if self.workspaces.is_none() {
-            unsafe {
-                let mut_ref = Pin::as_mut(&mut self);
-                Pin::get_unchecked_mut(mut_ref).workspaces =
-                    Some(conn.get_workspaces().map_err(|e| format!("{}", e))?);
-            }
+    pub fn get_focused_node(&mut self, conn: &mut I3Connection) -> Result<&Node, String> {
+        if self.nodes.is_none() {
+            self.get_tree(conn)?;
         }
-        Ok(Pin::into_ref(self).get_ref().workspaces.as_ref().unwrap())
-    }
-
-    pub fn workspaces<'a>(self: Pin<&'a Self>) -> Option<&'a Workspaces> {
-        self.get_ref().workspaces.as_ref()
-    }
-
-    pub fn get_focused_node<'a>(
-        mut self: Pin<&'a mut Self>,
-        conn: &mut I3Connection,
-    ) -> Result<&'a Node, String> {
-        if self.focused_node.is_none() {
-            self.as_mut().get_tree(conn)?;
-            let mut_ref = Pin::as_mut(&mut self);
-            let tree = mut_ref.tree.as_ref().unwrap();
+        if self.nodes.as_ref().unwrap().focused_node.is_none() {
+            let mut_ref = Pin::as_mut(self.nodes.as_mut().unwrap());
+            let tree = &mut_ref.full_tree;
             unsafe {
                 Pin::get_unchecked_mut(mut_ref).focused_node = Some(NonNull::from(
                     criteria::i3_find_focused_node(tree).ok_or("Unable to find focused node")?,
@@ -101,8 +64,9 @@ impl I3Data {
         }
         unsafe {
             Ok(self
-                .into_ref()
-                .get_ref()
+                .nodes
+                .as_ref()
+                .unwrap()
                 .focused_node
                 .as_ref()
                 .unwrap()
@@ -110,15 +74,37 @@ impl I3Data {
         }
     }
 
-    pub fn focused_node(self: Pin<&Self>) -> Option<&Node> {
-        if self.focused_node.is_none() {
-            None
-        } else {
-            unsafe {
-                Some(NonNull::as_ref(
-                    self.get_ref().focused_node.as_ref().unwrap(),
-                ))
-            }
+    pub fn focused_node(&self) -> Option<&Node> {
+        unsafe {
+            Some(
+                self.nodes
+                    .as_ref()
+                    .unwrap()
+                    .focused_node
+                    .as_ref()
+                    .unwrap()
+                    .as_ref(),
+            )
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn workspaces(&self, conn: &mut I3Connection) -> Result<Rc<Workspaces>, MessageError> {
+        if self.workspaces.borrow().is_none() {
+            self.workspaces
+                .borrow_mut()
+                .replace(Rc::new(conn.get_workspaces()?));
+        }
+        Ok(Rc::clone(self.workspaces.borrow().as_ref().unwrap()))
+    }
+
+    #[allow(dead_code)]
+    pub fn outputs(&self, conn: &mut I3Connection) -> Result<Rc<Outputs>, MessageError> {
+        if self.outputs.borrow().is_none() {
+            self.outputs
+                .borrow_mut()
+                .replace(Rc::new(conn.get_outputs()?));
+        }
+        Ok(Rc::clone(self.outputs.borrow().as_ref().unwrap()))
     }
 }

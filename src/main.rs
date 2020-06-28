@@ -2,8 +2,6 @@ use clap;
 
 use i3ipc::I3Connection;
 
-use std::pin::Pin;
-
 mod border;
 mod criteria;
 mod i3data;
@@ -54,23 +52,24 @@ fn main() {
     println!("Criteria: {:?}", criteria);
 
     let mut conn = I3Connection::connect().unwrap();
-    let data = I3Data::empty();
+    let mut data = I3Data::empty();
 
     match matches.subcommand() {
-        ("border", Some(border_matches)) => border::border_subcmd(border_matches, &mut conn, data),
-        ("window", Some(window_matches)) => window_subcmd(window_matches, &mut conn, data),
+        ("border", Some(border_matches)) => {
+            border::border_subcmd(border_matches, &mut conn, &mut data)
+        }
+        ("window", Some(window_matches)) => window_subcmd(window_matches, &mut conn, &mut data),
         _ => unreachable!(),
     }
 }
 
-fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, mut data: Pin<Box<I3Data>>) {
-    data.as_mut().get_tree(conn).unwrap();
-    data.as_mut().get_focused_node(conn).unwrap();
-    data.as_mut().get_workspaces(conn).unwrap();
-    let focused = data.as_ref().focused_node().unwrap();
-    let workspaces = data.as_ref().workspaces().unwrap();
-    let tree = data.as_ref().tree().unwrap();
-    let workspace = criteria::i3_find_focused_workspace(workspaces, tree).unwrap();
+fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, data: &mut I3Data) {
+    data.get_tree(conn).unwrap();
+    let workspaces = data.workspaces(conn).unwrap();
+    data.get_focused_node(conn).unwrap();
+    let focused = data.focused_node().unwrap();
+    let tree = data.tree().unwrap();
+    let workspace = criteria::i3_find_focused_workspace(&workspaces, tree).unwrap();
     let largest = criteria::i3_find_largest_tiled_window(&workspace).unwrap();
 
     println!("focused window: {:?}", focused.name);
