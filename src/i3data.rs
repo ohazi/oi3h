@@ -6,6 +6,7 @@ use std::marker::PhantomPinned;
 use std::pin::Pin;
 use std::ptr::NonNull;
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -19,7 +20,7 @@ struct I3Nodes {
 }
 
 pub struct I3Data {
-    nodes: Option<Pin<Box<I3Nodes>>>,
+    nodes: Cell<Option<Pin<Box<I3Nodes>>>>,
     workspaces: RefCell<Option<Rc<Workspaces>>>,
     outputs: RefCell<Option<Rc<Outputs>>>,
 }
@@ -27,34 +28,40 @@ pub struct I3Data {
 impl I3Data {
     pub fn empty() -> I3Data {
         I3Data {
-            nodes: None,
+            nodes: Cell::new(None),
             workspaces: RefCell::new(None),
             outputs: RefCell::new(None),
         }
     }
 
-    pub fn get_tree(&mut self, conn: &mut I3Connection) -> Result<&Node, String> {
-        if self.nodes.is_none() {
-            self.nodes = Some(Box::pin(I3Nodes {
-                full_tree: conn.get_tree().map_err(|e| format!("{}", e))?,
+    pub fn tree(&self, conn: &mut I3Connection) -> Result<&Node, MessageError> {
+        if unsafe { (*self.nodes.as_ptr()).is_none() } {
+            self.nodes.set(Some(Box::pin(I3Nodes {
+                full_tree: conn.get_tree()?,
                 focused_node: None,
                 focused_workspace: None,
                 _pin: PhantomPinned,
-            }));
+            })));
         }
-        Ok(&self.nodes.as_ref().unwrap().as_ref().get_ref().full_tree)
+        let pin_box: &Pin<Box<I3Nodes>> = unsafe { (*self.nodes.as_ptr()).as_ref().unwrap() };
+        let pin_ref: Pin<&I3Nodes> = Pin::as_ref(pin_box);
+        let tree: &Node = &pin_ref.get_ref().full_tree;
+        Ok(tree)
     }
 
-    pub fn tree(&self) -> Option<&Node> {
-        self.nodes.as_ref().map(|n| &n.as_ref().get_ref().full_tree)
-    }
-
-    pub fn get_focused_node(&mut self, conn: &mut I3Connection) -> Result<&Node, String> {
-        if self.nodes.is_none() {
-            self.get_tree(conn)?;
+    pub fn focused_node(&self, conn: &mut I3Connection) -> Result<&Node, String> {
+        if unsafe { (*self.nodes.as_ptr()).is_none() } {
+            self.tree(conn).map_err(|e| format!("{}", e))?;
         }
-        if self.nodes.as_ref().unwrap().focused_node.is_none() {
-            let mut_ref = Pin::as_mut(self.nodes.as_mut().unwrap());
+        if unsafe {
+            (*self.nodes.as_ptr())
+                .as_ref()
+                .unwrap()
+                .focused_node
+                .is_none()
+        } {
+            let borrow_mut = unsafe { (*self.nodes.as_ptr()).as_mut().unwrap() };
+            let mut_ref = Pin::as_mut(borrow_mut);
             let tree = &mut_ref.full_tree;
             unsafe {
                 Pin::get_unchecked_mut(mut_ref).focused_node = Some(NonNull::from(
@@ -62,30 +69,11 @@ impl I3Data {
                 ));
             }
         }
-        unsafe {
-            Ok(self
-                .nodes
-                .as_ref()
-                .unwrap()
-                .focused_node
-                .as_ref()
-                .unwrap()
-                .as_ref())
-        }
-    }
-
-    pub fn focused_node(&self) -> Option<&Node> {
-        unsafe {
-            Some(
-                self.nodes
-                    .as_ref()
-                    .unwrap()
-                    .focused_node
-                    .as_ref()
-                    .unwrap()
-                    .as_ref(),
-            )
-        }
+        let pin_box: &Pin<Box<I3Nodes>> = unsafe { (*self.nodes.as_ptr()).as_ref().unwrap() };
+        let pin_ref: Pin<&I3Nodes> = Pin::as_ref(pin_box);
+        let focused_node: &Node =
+            unsafe { pin_ref.get_ref().focused_node.as_ref().unwrap().as_ref() };
+        Ok(focused_node)
     }
 
     #[allow(dead_code)]

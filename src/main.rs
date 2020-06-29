@@ -52,24 +52,20 @@ fn main() {
     println!("Criteria: {:?}", criteria);
 
     let mut conn = I3Connection::connect().unwrap();
-    let mut data = I3Data::empty();
+    let data = I3Data::empty();
 
     match matches.subcommand() {
-        ("border", Some(border_matches)) => {
-            border::border_subcmd(border_matches, &mut conn, &mut data)
-        }
-        ("window", Some(window_matches)) => window_subcmd(window_matches, &mut conn, &mut data),
+        ("border", Some(border_matches)) => border::border_subcmd(border_matches, &mut conn, &data),
+        ("window", Some(window_matches)) => window_subcmd(window_matches, &mut conn, &data),
         _ => unreachable!(),
     }
 }
 
-fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, data: &mut I3Data) {
-    data.get_tree(conn).unwrap();
+fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Data) {
+    let tree = data.tree(conn).unwrap();
     let workspaces = data.workspaces(conn).unwrap();
-    data.get_focused_node(conn).unwrap();
-    let focused = data.focused_node().unwrap();
-    let tree = data.tree().unwrap();
-    let workspace = criteria::i3_find_focused_workspace(&workspaces, tree).unwrap();
+    let focused = data.focused_node(conn).unwrap();
+    let workspace = criteria::i3_find_focused_workspace(&workspaces, &tree).unwrap();
     let largest = criteria::i3_find_largest_tiled_window(&workspace).unwrap();
 
     println!("focused window: {:?}", focused.name);

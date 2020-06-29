@@ -66,11 +66,7 @@ pub fn validate_border(border: String) -> Result<(), String> {
     Ok(())
 }
 
-pub fn border_subcmd(
-    matches: &clap::ArgMatches,
-    conn: &mut I3Connection,
-    data: &mut I3Data,
-) {
+pub fn border_subcmd(matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Data) {
     //let criteria = matches.value_of("criteria").unwrap();
     let criteria = "";
 
@@ -98,7 +94,7 @@ pub fn border_subcmd(
     // match against the border type when cycling, and ignore the width. This
     // means that you won't be able to, e.g. toggle ["pixel 2" "pixel 5"
     // "pixel 10"], but you will be able to toggle ["none" "pixel 2" "normal 4"].
-    let focused = data.get_focused_node(conn).unwrap();
+    let focused = data.focused_node(conn).unwrap();
     let current_state = Border {
         border: focused.border.clone(),
         width: Some(focused.current_border_width),
