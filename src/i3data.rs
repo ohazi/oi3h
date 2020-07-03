@@ -9,7 +9,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::criteria;
+use crate::search;
 
 struct I3Nodes {
     full_tree: Node,
@@ -33,6 +33,12 @@ impl I3Data {
         }
     }
 
+    /// Returns a shared reference to the nodes field, if it exists.
+    ///
+    /// # Safety
+    /// The only unsafe operation performed by this function is dereferencing `self.nodes.as_ptr()`,
+    /// which cannot fail. Furthermore, `nodes` is pinned as soon as it is set, so it is safe to hold
+    /// onto shared references to `nodes` as long as they don't outlive `self`.
     fn nodes(&self) -> Option<&I3Nodes> {
         let orpb_i3n: Option<&Pin<Box<I3Nodes>>> = unsafe { (*self.nodes.as_ptr()).as_ref() };
         let or_i3n: Option<&I3Nodes> = orpb_i3n.map(|i| i.as_ref().get_ref());
@@ -64,8 +70,8 @@ impl I3Data {
             let full_tree = &nodes_mut.full_tree;
             unsafe {
                 Pin::get_unchecked_mut(nodes_mut).focused_node =
-                    criteria::i3_find_focused_node(full_tree)
-                        .ok_or("Unable to find focused node")?;
+                    search::i3_find_focused_node(full_tree).ok_or("Unable to find focused node")?
+                        as *const Node;
             }
         }
         let focused_node: &Node = unsafe { self.nodes().unwrap().focused_node.as_ref().unwrap() };
@@ -80,8 +86,9 @@ impl I3Data {
             let nodes_mut = self.nodes_mut().unwrap();
             unsafe {
                 Pin::get_unchecked_mut(nodes_mut).focused_workspace =
-                    criteria::i3_find_focused_workspace(&workspaces, tree)
-                        .ok_or("Unable to find focused workspace")?;
+                    search::i3_find_focused_workspace(&workspaces, tree)
+                        .ok_or("Unable to find focused workspace")?
+                        as *const Node;
             }
         }
         let focused_workspace: &Node =

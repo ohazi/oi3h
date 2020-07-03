@@ -4,6 +4,7 @@ use i3ipc::I3Connection;
 
 mod border;
 mod criteria;
+mod search;
 mod i3data;
 
 use i3data::I3Data;
@@ -67,7 +68,7 @@ fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3
     let focused = data.focused_node(conn).unwrap();
     //let workspace = criteria::i3_find_focused_workspace(&workspaces, &tree).unwrap();
     let workspace = data.focused_workspace(conn).unwrap();
-    let largest = criteria::i3_find_largest_tiled_window(&workspace).unwrap();
+    let largest = search::i3_find_largest_tiled_window(&workspace).unwrap();
 
     println!("focused window: {:?}", focused.name);
     println!("focused workspace: {:?}", workspace.name);
