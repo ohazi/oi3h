@@ -4,7 +4,7 @@ use i3ipc::I3Connection;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
-use crate::i3data::I3Data;
+use crate::i3cache::I3Cache;
 
 #[derive(Debug, Clone, Eq)]
 pub struct Border {
@@ -66,7 +66,7 @@ pub fn validate_border(border: String) -> Result<(), String> {
     Ok(())
 }
 
-pub fn border_subcmd(matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Data) {
+pub fn border_subcmd(matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Cache) {
     //let criteria = matches.value_of("criteria").unwrap();
     let criteria = "";
 

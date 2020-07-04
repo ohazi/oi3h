@@ -2,12 +2,12 @@ use clap;
 
 use i3ipc::I3Connection;
 
-mod border;
+mod i3cache;
 mod criteria;
 mod search;
-mod i3data;
+mod border;
 
-use i3data::I3Data;
+use i3cache::I3Cache;
 
 fn main() {
     let matches = clap::App::new(clap::crate_name!())
@@ -53,7 +53,7 @@ fn main() {
     println!("Criteria: {:?}", criteria);
 
     let mut conn = I3Connection::connect().unwrap();
-    let data = I3Data::new();
+    let data = I3Cache::new();
 
     match matches.subcommand() {
         ("border", Some(border_matches)) => border::border_subcmd(border_matches, &mut conn, &data),
@@ -62,7 +62,7 @@ fn main() {
     }
 }
 
-fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Data) {
+fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Cache) {
     //let tree = data.full_tree(conn).unwrap();
     //let workspaces = data.workspaces(conn).unwrap();
     let focused = data.focused_node(conn).unwrap();

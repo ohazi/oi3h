@@ -59,7 +59,7 @@ pub fn i3_find_focused_workspace<'a>(workspaces: &Workspaces, tree: &'a Node) ->
     })
 }
 
-fn i3_tree_find_first<P>(parent: &Node, mut predicate: P) -> Option<&Node>
+pub fn i3_tree_find_first<P>(parent: &Node, mut predicate: P) -> Option<&Node>
 where
     P: FnMut(&Node) -> bool,
 {

@@ -1,3 +1,5 @@
+//! A cache for i3 IPC output and tree search operations that may be expensive to repeat.
+
 use i3ipc::reply::{Node, Outputs, Workspaces};
 use i3ipc::I3Connection;
 use i3ipc::MessageError;
@@ -11,6 +13,8 @@ use std::rc::Rc;
 
 use crate::search;
 
+/// Holds the root `Node` of the i3 tree, as well as any references to other `Node`s inside this
+/// tree.
 struct I3Nodes {
     full_tree: Node,
     focused_node: *const Node,
@@ -18,15 +22,17 @@ struct I3Nodes {
     _pin: PhantomPinned,
 }
 
-pub struct I3Data {
+/// Caches output from the i3 IPC channel, as well as results of search operations that may be
+/// expensive to repeat.
+pub struct I3Cache {
     nodes: Cell<Option<Pin<Box<I3Nodes>>>>,
     workspaces: RefCell<Option<Rc<Workspaces>>>,
     outputs: RefCell<Option<Rc<Outputs>>>,
 }
 
-impl I3Data {
-    pub fn new() -> I3Data {
-        I3Data {
+impl I3Cache {
+    pub fn new() -> I3Cache {
+        I3Cache {
             nodes: Cell::new(None),
             workspaces: RefCell::new(None),
             outputs: RefCell::new(None),
@@ -38,13 +44,29 @@ impl I3Data {
     /// # Safety
     /// The only unsafe operation performed by this function is dereferencing `self.nodes.as_ptr()`,
     /// which cannot fail. Furthermore, `nodes` is pinned as soon as it is set, so it is safe to hold
-    /// onto shared references to `nodes` as long as they don't outlive `self`.
+    /// onto shared references to `nodes` as long as they don't outlive `self`. Other references
+    /// within nodes (such as `focused_node`) may change while the shared reference to `nodes` is
+    /// held, however, they are raw pointers, so dereferencing them is unsafe anyway.
     fn nodes(&self) -> Option<&I3Nodes> {
         let orpb_i3n: Option<&Pin<Box<I3Nodes>>> = unsafe { (*self.nodes.as_ptr()).as_ref() };
         let or_i3n: Option<&I3Nodes> = orpb_i3n.map(|i| i.as_ref().get_ref());
         or_i3n
     }
 
+    /// Returns a pinned, mutable reference to the nodes field, if it exists.
+    ///
+    /// # Safety
+    /// As with `nodes()`, the only unsafe operation performed by this function is dereferencing
+    /// `self.nodes.as_ptr()`, which cannot fail. In order to do anything unsafe with the output of
+    /// this function, you would need to use unsafe code, such as:
+    /// ```
+    /// let nodes_mut = self.nodes_mut().unwrap();
+    /// unsafe {
+    ///     Pin::get_unchecked_mut(nodes_mut).focused_node = ...
+    /// }
+    /// ```
+    /// Callers of this function should be aware of any existing shared references to `nodes` or
+    /// subfields when performing any unsafe operations with the returned value.
     fn nodes_mut(&self) -> Option<Pin<&mut I3Nodes>> {
         let borrow_mut: Option<&mut Pin<Box<I3Nodes>>> = unsafe { (*self.nodes.as_ptr()).as_mut() };
         let mut_ref: Option<Pin<&mut I3Nodes>> = borrow_mut.map(|i| Pin::as_mut(i));

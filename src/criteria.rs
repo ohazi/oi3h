@@ -1,5 +1,11 @@
 use regex::Regex;
 
+use i3ipc::reply::Node;
+use i3ipc::I3Connection;
+
+use crate::i3cache::I3Cache;
+use crate::search;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowType {
     Normal,
@@ -61,19 +67,6 @@ fn parse_con_id(input: &str) -> Result<ConId, String> {
         .map_err(|e| format!("con_id: {}", e)),
     }
 }
-
-/*
-#[allow(dead_code)]
-fn get_focused_con_id() -> Result<usize, String> {
-    // TODO: We should probably only do this connection setup stuff once
-    let mut connection = I3Connection::connect().map_err(|e| format!("{}", e))?;
-    let tree = connection.get_tree().map_err(|e| format!("{}", e))?;
-    let focused = i3_find_focused_node(&tree).ok_or("Unable to find focused node")?;
-
-    // id is clearly a pointer, not sure why i3ipc thinks it's an i64...
-    Ok(focused.id as usize)
-}
-*/
 
 #[derive(Debug, Clone)]
 pub enum Match {
@@ -183,4 +176,43 @@ pub fn parse_criteria(input: &str) -> Result<Option<Match>, String> {
         "tiling" => Ok(Some(Match::Tiling)),
         _ => Err(format!("Unknown criteria: '{}'", input)),
     }
+}
+
+// TODO: ugh... probably easier to write the individual ones first
+fn i3_criteria_search<'a>(
+    conn: &mut I3Connection,
+    data: &'a I3Cache,
+    criteria: &[Match],
+) -> Vec<&'a Node> {
+    // Not sure how I want to implement this yet, but this needs to be a narrowing search, i.e.
+    // first search is performed on the full tree, and subsequent searches are performed on this
+    // list to remove non-matching nodes.
+    let mut found = Vec::<&Node>::new();
+
+    for c in criteria.iter() {
+        match c {
+            Match::Class(r) => {}
+            Match::Instance(r) => {}
+            Match::WindowRole(r) => {}
+            Match::WindowType(wt) => {}
+            Match::Id(id) => {
+                let maybe_window_id =
+                    search::i3_tree_find_first(data.full_tree(conn).unwrap(), |n| {
+                        n.window == Some(*id as i32)
+                    });
+                if let Some(id) = maybe_window_id {
+                    found.push(id);
+                }
+            }
+            Match::Title(r) => {}
+            Match::Urgent(u) => {}
+            Match::Workspace(r) => {}
+            Match::ConMark(Regex) => {}
+            Match::ConId(ConId) => {}
+            Match::Floating => {}
+            Match::Tiling => {}
+        }
+    }
+
+    found
 }
