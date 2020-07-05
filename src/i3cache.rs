@@ -1,8 +1,7 @@
 //! A cache for i3 IPC output and tree search operations that may be expensive to repeat.
 
-use i3ipc::reply::{Node, Outputs, Workspaces};
-use i3ipc::I3Connection;
-use i3ipc::MessageError;
+use i3_ipc::reply::{Node, Outputs, Workspaces};
+use i3_ipc::I3Stream;
 
 use std::marker::PhantomPinned;
 use std::pin::Pin;
@@ -10,6 +9,8 @@ use std::pin::Pin;
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+use std::io;
 
 use crate::search;
 
@@ -73,7 +74,7 @@ impl I3Cache {
         mut_ref
     }
 
-    pub fn full_tree(&self, conn: &mut I3Connection) -> Result<&Node, MessageError> {
+    pub fn full_tree(&self, conn: &mut I3Stream) -> io::Result<&Node> {
         if self.nodes().is_none() {
             self.nodes.set(Some(Box::pin(I3Nodes {
                 full_tree: conn.get_tree()?,
@@ -85,7 +86,7 @@ impl I3Cache {
         Ok(&self.nodes().unwrap().full_tree)
     }
 
-    pub fn focused_node(&self, conn: &mut I3Connection) -> Result<&Node, String> {
+    pub fn focused_node(&self, conn: &mut I3Stream) -> Result<&Node, String> {
         self.full_tree(conn).map_err(|e| format!("{}", e))?;
         if self.nodes().unwrap().focused_node.is_null() {
             let nodes_mut = self.nodes_mut().unwrap();
@@ -101,7 +102,7 @@ impl I3Cache {
     }
 
     #[allow(dead_code)]
-    pub fn focused_workspace(&self, conn: &mut I3Connection) -> Result<&Node, String> {
+    pub fn focused_workspace(&self, conn: &mut I3Stream) -> Result<&Node, String> {
         let tree = self.full_tree(conn).map_err(|e| format!("{}", e))?;
         let workspaces = self.workspaces(conn).map_err(|e| format!("{}", e))?;
         if self.nodes().unwrap().focused_workspace.is_null() {
@@ -118,7 +119,7 @@ impl I3Cache {
         Ok(focused_workspace)
     }
 
-    pub fn workspaces(&self, conn: &mut I3Connection) -> Result<Rc<Workspaces>, MessageError> {
+    pub fn workspaces(&self, conn: &mut I3Stream) -> io::Result<Rc<Workspaces>> {
         if self.workspaces.borrow().is_none() {
             self.workspaces
                 .borrow_mut()
@@ -128,7 +129,7 @@ impl I3Cache {
     }
 
     #[allow(dead_code)]
-    pub fn outputs(&self, conn: &mut I3Connection) -> Result<Rc<Outputs>, MessageError> {
+    pub fn outputs(&self, conn: &mut I3Stream) -> io::Result<Rc<Outputs>> {
         if self.outputs.borrow().is_none() {
             self.outputs
                 .borrow_mut()

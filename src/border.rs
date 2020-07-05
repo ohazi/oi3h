@@ -1,5 +1,5 @@
-use i3ipc::reply::NodeBorder;
-use i3ipc::I3Connection;
+use i3_ipc::reply::NodeBorder;
+use i3_ipc::I3Stream;
 
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -66,7 +66,7 @@ pub fn validate_border(border: String) -> Result<(), String> {
     Ok(())
 }
 
-pub fn border_subcmd(matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Cache) {
+pub fn border_subcmd(matches: &clap::ArgMatches, conn: &mut I3Stream, data: &I3Cache) {
     //let criteria = matches.value_of("criteria").unwrap();
     let criteria = "";
 
@@ -150,7 +150,6 @@ pub fn border_subcmd(matches: &clap::ArgMatches, conn: &mut I3Connection, data: 
                 conn.run_command(format!("[{}] border pixel {}", criteria, maybe_width).as_str())
                     .unwrap();
             }
-            _ => {}
         }
     } else {
         println!("{:?}", current_state);

@@ -1,4 +1,4 @@
-use i3ipc::reply::{Node, NodeType, Workspaces};
+use i3_ipc::reply::{Node, NodeType, Workspaces};
 
 pub fn i3_find_focused_node(parent: &Node) -> Option<&Node> {
     if parent.focused {
@@ -22,8 +22,8 @@ pub fn i3_find_focused_node(parent: &Node) -> Option<&Node> {
 fn i3_larger_node<'a>(n: Option<&'a Node>, m: Option<&'a Node>) -> Option<&'a Node> {
     m.map_or(n, |mm| {
         n.map_or(m, |nn| {
-            let nn_size = nn.window_rect.2 * nn.window_rect.3;
-            let mm_size = mm.window_rect.2 * mm.window_rect.3;
+            let nn_size = nn.window_rect.width * nn.window_rect.height;
+            let mm_size = mm.window_rect.width * mm.window_rect.height;
             if nn_size > mm_size {
                 n
             } else {
@@ -37,7 +37,7 @@ pub fn i3_find_largest_tiled_window(parent: &Node) -> Option<&Node> {
     parent
         .nodes
         .iter()
-        .fold(None, |largest, node| match node.nodetype {
+        .fold(None, |largest, node| match node.node_type {
             NodeType::Con => node.window.map_or_else(
                 || i3_larger_node(largest, i3_find_largest_tiled_window(node)),
                 |_w| i3_larger_node(largest, Some(node)),
@@ -48,7 +48,6 @@ pub fn i3_find_largest_tiled_window(parent: &Node) -> Option<&Node> {
 
 pub fn i3_find_focused_workspace<'a>(workspaces: &Workspaces, tree: &'a Node) -> Option<&'a Node> {
     let workspace = workspaces
-        .workspaces
         .iter()
         .find(|w| w.focused == true)
         .unwrap()

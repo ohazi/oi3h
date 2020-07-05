@@ -1,7 +1,7 @@
 use regex::Regex;
 
-use i3ipc::reply::Node;
-use i3ipc::I3Connection;
+use i3_ipc::reply::Node;
+use i3_ipc::I3Stream;
 
 use crate::i3cache::I3Cache;
 use crate::search;
@@ -20,6 +20,7 @@ pub enum WindowType {
     Notification,
 }
 
+// TODO: Use serde for this?
 fn parse_window_type(input: &str) -> Result<WindowType, String> {
     match input.to_lowercase().as_str() {
         "normal" => Ok(WindowType::Normal),
@@ -180,7 +181,7 @@ pub fn parse_criteria(input: &str) -> Result<Option<Match>, String> {
 
 // TODO: ugh... probably easier to write the individual ones first
 fn i3_criteria_search<'a>(
-    conn: &mut I3Connection,
+    conn: &mut I3Stream,
     data: &'a I3Cache,
     criteria: &[Match],
 ) -> Vec<&'a Node> {
@@ -198,7 +199,7 @@ fn i3_criteria_search<'a>(
             Match::Id(id) => {
                 let maybe_window_id =
                     search::i3_tree_find_first(data.full_tree(conn).unwrap(), |n| {
-                        n.window == Some(*id as i32)
+                        n.window == Some(*id)
                     });
                 if let Some(id) = maybe_window_id {
                     found.push(id);

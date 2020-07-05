@@ -1,6 +1,6 @@
 use clap;
 
-use i3ipc::I3Connection;
+use i3_ipc::{Connect, I3, I3Stream};
 
 mod i3cache;
 mod criteria;
@@ -52,7 +52,7 @@ fn main() {
 
     println!("Criteria: {:?}", criteria);
 
-    let mut conn = I3Connection::connect().unwrap();
+    let mut conn = I3::connect().unwrap();
     let data = I3Cache::new();
 
     match matches.subcommand() {
@@ -62,7 +62,7 @@ fn main() {
     }
 }
 
-fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Connection, data: &I3Cache) {
+fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Stream, data: &I3Cache) {
     //let tree = data.full_tree(conn).unwrap();
     //let workspaces = data.workspaces(conn).unwrap();
     let focused = data.focused_node(conn).unwrap();
