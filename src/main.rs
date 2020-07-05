@@ -41,6 +41,7 @@ fn main() {
                 ),
         )
         .subcommand(clap::SubCommand::with_name("window").about("Find largest window"))
+        .subcommand(clap::SubCommand::with_name("tree").about("Test"))
         .get_matches();
 
     let criteria: Vec<criteria::Match> = matches.values_of("criteria").map_or(vec![], |cr_args| {
@@ -58,6 +59,7 @@ fn main() {
     match matches.subcommand() {
         ("border", Some(border_matches)) => border::border_subcmd(border_matches, &mut conn, &data),
         ("window", Some(window_matches)) => window_subcmd(window_matches, &mut conn, &data),
+        ("tree", Some(tree_matches)) => tree_subcmd(tree_matches, &mut conn, &data),
         _ => unreachable!(),
     }
 }
@@ -73,4 +75,14 @@ fn window_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Stream, data: &I3Cach
     println!("focused window: {:?}", focused.name);
     println!("focused workspace: {:?}", workspace.name);
     println!("largest window: {:?}", largest.name);
+}
+
+fn tree_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Stream, data: &I3Cache) {
+    let tree = data.full_tree(conn).unwrap();
+
+    use search::TreeIter;
+
+    for elem in TreeIter::from(tree) {
+        println!("id: {}", elem.id);
+    }
 }

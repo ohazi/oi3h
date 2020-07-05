@@ -1,5 +1,109 @@
 use i3_ipc::reply::{Node, NodeType, Workspaces};
 
+#[derive(Eq, PartialEq, Clone, Copy)]
+enum TreeIterPos {
+    Parent,
+    Node(usize),
+    FloatingNode(usize),
+    Done,
+}
+
+impl TreeIterPos {
+    fn first(node: &Node) -> TreeIterPos {
+        TreeIterPos::Parent.next(node)
+    }
+
+    fn next(&self, node: &Node) -> TreeIterPos {
+        match self {
+            TreeIterPos::Parent => {
+                if node.nodes.len() > 0 {
+                    TreeIterPos::Node(0)
+                } else if node.floating_nodes.len() > 0 {
+                    TreeIterPos::FloatingNode(0)
+                } else {
+                    TreeIterPos::Done
+                }
+            }
+            TreeIterPos::Node(p) => {
+                if node.nodes.len() > p + 1 {
+                    TreeIterPos::Node(p + 1)
+                } else if node.floating_nodes.len() > 0 {
+                    TreeIterPos::FloatingNode(0)
+                } else {
+                    TreeIterPos::Done
+                }
+            }
+            TreeIterPos::FloatingNode(p) => {
+                if node.floating_nodes.len() > p + 1 {
+                    TreeIterPos::FloatingNode(p + 1)
+                } else {
+                    TreeIterPos::Done
+                }
+            }
+            TreeIterPos::Done => TreeIterPos::Done,
+        }
+    }
+}
+
+pub struct TreeIter<'a> {
+    chain: Vec<&'a Node>,
+    pos: Vec<TreeIterPos>,
+}
+
+impl<'a> From<&'a Node> for TreeIter<'a> {
+    fn from(root: &'a Node) -> TreeIter<'a> {
+        TreeIter {
+            chain: vec![root],
+            pos: vec![TreeIterPos::Parent],
+        }
+    }
+}
+
+impl<'a> Iterator for TreeIter<'a> {
+    type Item = &'a Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let tail = self.chain.last().unwrap();
+        let tail_pos = *self.pos.last().unwrap();
+
+        let next_node = match tail_pos {
+            TreeIterPos::Parent => {
+                *self.pos.last_mut().unwrap() = TreeIterPos::first(tail);
+                return Some(tail);
+            }
+            TreeIterPos::Node(p) => &tail.nodes[p],
+            TreeIterPos::FloatingNode(p) => &tail.floating_nodes[p],
+            TreeIterPos::Done => {
+                return None;
+            }
+        };
+
+        let next_pos = TreeIterPos::first(next_node);
+        self.chain.push(next_node);
+        self.pos.push(next_pos);
+
+        loop {
+            let tail_pos = *self.pos.last().unwrap();
+
+            if tail_pos == TreeIterPos::Done && self.chain.len() > 1 {
+                self.chain.pop();
+                self.pos.pop();
+
+                let new_tail = self.chain.last().unwrap();
+                let new_tail_pos = *self.pos.last().unwrap();
+
+                *self.pos.last_mut().unwrap() = new_tail_pos.next(new_tail);
+
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        Some(next_node)
+    }
+}
+
 pub fn i3_find_focused_node(parent: &Node) -> Option<&Node> {
     if parent.focused {
         Some(parent)
