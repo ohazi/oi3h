@@ -1,11 +1,11 @@
 use clap;
 
-use i3_ipc::{Connect, I3, I3Stream};
+use i3_ipc::{Connect, I3Stream, I3};
 
-mod i3cache;
-mod criteria;
-mod search;
 mod border;
+mod criteria;
+mod i3cache;
+mod search;
 
 use i3cache::I3Cache;
 
@@ -42,6 +42,7 @@ fn main() {
         )
         .subcommand(clap::SubCommand::with_name("window").about("Find largest window"))
         .subcommand(clap::SubCommand::with_name("tree").about("Test"))
+        .subcommand(clap::SubCommand::with_name("match").about("Test"))
         .get_matches();
 
     let criteria: Vec<criteria::Match> = matches.values_of("criteria").map_or(vec![], |cr_args| {
@@ -60,6 +61,7 @@ fn main() {
         ("border", Some(border_matches)) => border::border_subcmd(border_matches, &mut conn, &data),
         ("window", Some(window_matches)) => window_subcmd(window_matches, &mut conn, &data),
         ("tree", Some(tree_matches)) => tree_subcmd(tree_matches, &mut conn, &data),
+        ("match", Some(match_matches)) => match_subcmd(match_matches, &criteria, &mut conn, &data),
         _ => unreachable!(),
     }
 }
@@ -84,5 +86,71 @@ fn tree_subcmd(_matches: &clap::ArgMatches, conn: &mut I3Stream, data: &I3Cache)
 
     for elem in TreeIter::from(tree) {
         println!("id: {}", elem.id);
+    }
+}
+
+fn match_subcmd(
+    _matches: &clap::ArgMatches,
+    criteria: &[criteria::Match],
+    conn: &mut I3Stream,
+    data: &I3Cache,
+) {
+    let all_outputs = criteria::all_outputs(conn, data);
+    println!(
+        "all outputs: {:?}",
+        all_outputs
+            .0
+            .iter()
+            .map(|o| o.name.as_ref())
+            .collect::<Vec<_>>()
+    );
+
+    let mut filtered_outputs = all_outputs;
+    for oc in criteria.iter() {
+        match oc {
+            criteria::Match::Output(p) => {
+                filtered_outputs = criteria::match_output(conn, data, filtered_outputs, p);
+                println!("pattern: {}", p);
+                //println!("filtered outputs: {:?}", filtered_outputs);
+                println!(
+                    "filtered outputs: {:?}",
+                    filtered_outputs
+                        .0
+                        .iter()
+                        .map(|o| o.name.as_ref())
+                        .collect::<Vec<_>>()
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let all_workspaces = criteria::all_workspaces(filtered_outputs);
+    println!(
+        "all workspaces on selected output(s): {:?}",
+        all_workspaces
+            .0
+            .iter()
+            .map(|w| w.name.as_ref())
+            .collect::<Vec<_>>()
+    );
+
+    let mut filtered_workspaces = all_workspaces;
+    for oc in criteria.iter() {
+        match oc {
+            criteria::Match::Workspace(p) => {
+                filtered_workspaces = criteria::match_workspace(conn, data, filtered_workspaces, p);
+                println!("pattern: {}", p);
+                println!(
+                    "filtered workspaces: {:?}",
+                    filtered_workspaces
+                        .0
+                        .iter()
+                        .map(|o| o.name.as_ref())
+                        .collect::<Vec<_>>()
+                );
+            }
+            _ => {}
+        }
     }
 }

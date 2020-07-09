@@ -1,12 +1,12 @@
 use regex::Regex;
 
-use i3_ipc::reply::Node;
+use i3_ipc::reply::{Node, NodeType, Output, Workspace};
 use i3_ipc::I3Stream;
 
 use crate::i3cache::I3Cache;
 use crate::search;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowType {
     Normal,
     Dialog,
@@ -37,7 +37,7 @@ fn parse_window_type(input: &str) -> Result<WindowType, String> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Urgent {
     Latest,
     Oldest,
@@ -51,7 +51,7 @@ fn parse_urgent(input: &str) -> Result<Urgent, String> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConId {
     Focused,
     Id(usize),
@@ -78,6 +78,7 @@ pub enum Match {
     Id(u32),
     Title(Regex),
     Urgent(Urgent),
+    Output(Regex),
     Workspace(Regex),
     ConMark(Regex),
     ConId(ConId),
@@ -153,6 +154,14 @@ pub fn parse_criteria(input: &str) -> Result<Option<Match>, String> {
             .get(1)
             .ok_or("urgent requires a parameter".to_string())
             .and_then(|param| parse_urgent(param).map(|u| Some(Match::Urgent(u)))),
+        "output" => token_split
+            .get(1)
+            .ok_or("output requires a parameter".to_string())
+            .and_then(|param| {
+                Regex::new(param)
+                    .map(|r| Some(Match::Output(r)))
+                    .map_err(|e| format!("output: {}", e))
+            }),
         "workspace" => token_split
             .get(1)
             .ok_or("workspace requires a parameter".to_string())
@@ -179,6 +188,7 @@ pub fn parse_criteria(input: &str) -> Result<Option<Match>, String> {
     }
 }
 
+/*
 // TODO: ugh... probably easier to write the individual ones first
 fn i3_criteria_search<'a>(
     conn: &mut I3Stream,
@@ -207,6 +217,7 @@ fn i3_criteria_search<'a>(
             }
             Match::Title(r) => {}
             Match::Urgent(u) => {}
+            Match::Output(p) => {}
             Match::Workspace(r) => {}
             Match::ConMark(Regex) => {}
             Match::ConId(ConId) => {}
@@ -216,4 +227,142 @@ fn i3_criteria_search<'a>(
     }
 
     found
+}
+*/
+
+#[derive(Debug)]
+pub struct OutputMatches<'a>(pub Vec<&'a Node>);
+
+#[derive(Debug)]
+pub struct WorkspaceMatches<'a>(pub Vec<&'a Node>);
+
+#[derive(Debug)]
+struct NodeMatches<'a>(Vec<&'a Node>);
+
+pub fn all_outputs<'a>(conn: &mut I3Stream, data: &'a I3Cache) -> OutputMatches<'a> {
+    let root = data.full_tree(conn).unwrap();
+
+    let all_outputs = search::i3_tree_find_all(root, |n| n.node_type == NodeType::Output);
+    OutputMatches(all_outputs)
+}
+
+pub fn match_output<'a>(
+    conn: &mut I3Stream,
+    data: &'a I3Cache,
+    matches: OutputMatches<'a>,
+    pattern: &Regex,
+) -> OutputMatches<'a> {
+    let outputs = data.outputs(conn).unwrap();
+
+    // Some(Some(&Output)): A selected output that was found
+    // Some(None):          A selected output that was not found
+    // None:                A pattern
+    let selection: Option<Option<&Output>> = match pattern.as_str() {
+        "__focused__" | "__active__" => Some(outputs.iter().find(|o| o.active)),
+        "__primary__" => Some(outputs.iter().find(|o| o.primary)),
+        _ => None,
+    };
+
+    let new_matches: Vec<&Node> = match selection {
+        Some(selection) => selection.map_or(vec![], |selected| {
+            matches
+                .0
+                .iter()
+                .filter_map(|node| {
+                    if let Some(name) = &node.name {
+                        if name.as_str() == selected.name.as_str() {
+                            Some(*node)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }),
+        None => matches
+            .0
+            .iter()
+            .filter_map(|node| {
+                if let Some(name) = &node.name {
+                    if pattern.is_match(name.as_str()) {
+                        Some(*node)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect(),
+    };
+
+    OutputMatches(new_matches)
+}
+
+pub fn all_workspaces<'a>(matches: OutputMatches<'a>) -> WorkspaceMatches<'a> {
+    let all_workspaces: Vec<&Node> = matches
+        .0
+        .iter()
+        .flat_map(|output| search::i3_tree_find_all(output, |n| n.node_type == NodeType::Workspace))
+        .collect();
+
+    WorkspaceMatches(all_workspaces)
+}
+
+pub fn match_workspace<'a>(
+    conn: &mut I3Stream,
+    data: &'a I3Cache,
+    matches: WorkspaceMatches<'a>,
+    pattern: &Regex,
+) -> WorkspaceMatches<'a> {
+    let workspaces = data.workspaces(conn).unwrap();
+
+    // Some(Some(&Workspace)):  A selected workspace that was found
+    // Some(None):              A selected workspace that was not found
+    // None:                    A pattern
+    let selection: Option<Option<&Workspace>> = match pattern.as_str() {
+        "__focused__" => Some(workspaces.iter().find(|w| w.focused)),
+        "__visible__" => Some(workspaces.iter().find(|w| w.visible)),
+        "__urgent__" => Some(workspaces.iter().find(|w| w.urgent)),
+        _ => None,
+    };
+
+    let new_matches: Vec<&Node> = match selection {
+        Some(selection) => selection.map_or(vec![], |selected| {
+            matches
+                .0
+                .iter()
+                .filter_map(|node| {
+                    if let Some(name) = &node.name {
+                        if name.as_str() == selected.name.as_str() {
+                            Some(*node)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }),
+        None => matches
+            .0
+            .iter()
+            .filter_map(|node| {
+                if let Some(name) = &node.name {
+                    if pattern.is_match(name.as_str()) {
+                        Some(*node)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect(),
+    };
+
+    WorkspaceMatches(new_matches)
 }

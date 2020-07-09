@@ -1,6 +1,6 @@
 use i3_ipc::reply::{Node, NodeType, Workspaces};
 
-#[derive(Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash)]
 enum TreeIterPos {
     Parent,
     Node(usize),
@@ -43,8 +43,13 @@ impl TreeIterPos {
             TreeIterPos::Done => TreeIterPos::Done,
         }
     }
+
+    fn inc(&mut self, node: &Node) {
+        *self = self.next(node);
+    }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TreeIter<'a> {
     chain: Vec<&'a Node>,
     pos: Vec<TreeIterPos>,
@@ -77,8 +82,8 @@ impl<'a> Iterator for TreeIter<'a> {
                 return None;
             }
         };
-
         let next_pos = TreeIterPos::first(next_node);
+
         self.chain.push(next_node);
         self.pos.push(next_pos);
 
@@ -90,11 +95,7 @@ impl<'a> Iterator for TreeIter<'a> {
                 self.pos.pop();
 
                 let new_tail = self.chain.last().unwrap();
-                let new_tail_pos = *self.pos.last().unwrap();
-
-                *self.pos.last_mut().unwrap() = new_tail_pos.next(new_tail);
-
-                continue;
+                self.pos.last_mut().unwrap().inc(new_tail);
             } else {
                 break;
             }
@@ -103,6 +104,8 @@ impl<'a> Iterator for TreeIter<'a> {
         Some(next_node)
     }
 }
+
+impl<'a> std::iter::FusedIterator for TreeIter<'a> {}
 
 pub fn i3_find_focused_node(parent: &Node) -> Option<&Node> {
     if parent.focused {
@@ -192,8 +195,7 @@ where
     }
 }
 
-#[allow(dead_code)]
-fn i3_tree_find_all<P>(parent: &Node, mut predicate: P) -> Vec<&Node>
+pub fn i3_tree_find_all<P>(parent: &Node, mut predicate: P) -> Vec<&Node>
 where
     P: FnMut(&Node) -> bool,
 {
